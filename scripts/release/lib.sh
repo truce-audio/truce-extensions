@@ -8,7 +8,11 @@
 
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+# The root is two levels above this file, wherever the caller runs from.
+# Resolved from the script's own location rather than `git rev-parse`:
+# outside a git checkout that expands to `cd ""`, a silent no-op that
+# leaves every relative path below pointing at the wrong place.
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 # On Windows (WSL) both cargo.exe and cargo can be on PATH; cargo.exe is
 # the one that sees the Windows toolchain.

@@ -711,8 +711,29 @@ fn lv2_unit(u: Lv2Unit) -> Option<&'static str> {
     })
 }
 
+/// Escape `s` for the inside of a Turtle short string literal (`"..."`).
+///
+/// The grammar forbids a raw `"`, `\`, line feed or carriage return
+/// there, so a plugin, vendor, port or preset name carrying a newline
+/// would otherwise render a TTL the host refuses to load. Other control
+/// characters are legal raw but escaped too (`\uXXXX`), so nothing
+/// invisible lands in a host's plugin list.
 fn escape_turtle(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{:04X}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The URI of one factory preset: `<plugin_uri>#preset-<uuid>`.
@@ -831,6 +852,17 @@ pub fn lv2_version(version: &str) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Turtle's short string literal can't hold a raw `"`, `\`, LF or
+    /// CR; each must come out as its escape, and nothing else changes.
+    #[test]
+    fn turtle_escaping_covers_every_forbidden_character() {
+        assert_eq!(super::escape_turtle("plain ✓"), "plain ✓");
+        assert_eq!(
+            super::escape_turtle("a \"b\" \\ c\nd\re\tf\u{7}"),
+            "a \\\"b\\\" \\\\ c\\nd\\re\\tf\\u0007"
+        );
+    }
     use super::*;
 
     #[test]
