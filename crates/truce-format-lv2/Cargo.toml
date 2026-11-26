@@ -1,0 +1,29 @@
+[package]
+name = "truce-format-lv2"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "LV2 format helper for cargo-truce"
+
+# The binary name is the contract: `cargo-truce` finds this on `PATH`
+# as `truce-format-lv2`, the way cargo finds `cargo-<subcommand>`.
+[[bin]]
+name = "truce-format-lv2"
+path = "src/main.rs"
+
+[dependencies]
+truce-lv2-meta = { workspace = true }
+# For `meta::read_root` / `resolve_root` and the `PluginDef` the config
+# view deserializes into.
+truce-build = { workspace = true }
+truce-utils = { workspace = true }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+[lints]
+workspace = true

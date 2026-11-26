@@ -1,0 +1,7 @@
+/target
+crates/*/target
+crates/*/.cargo
+.DS_STORE
+.cargo/config.toml
+**/*.pyc
+**/*.swp

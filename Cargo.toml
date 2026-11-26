@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/truce-lv2",
+    "crates/truce-lv2-meta",
+    "crates/truce-format-lv2",
+]
+
+# Tracks truce's `major.minor`; see the compatibility table in README.md.
+# The repos release independently, so this is a deliberate mirror rather
+# than a shared workspace version.
+[workspace.package]
+version = "6.3.0"
+edition = "2024"
+license = "LicenseRef-TruceLicense-1.0"
+rust-version = "1.95"
+repository = "https://github.com/truce-audio/truce-extensions"
+homepage = "https://truce.audio"
+
+# Same lint posture as the main repo, so a crate that moves between the
+# two doesn't change shape. `objc` 0.2's `msg_send!` / `class!` / `sel!`
+# macros emit `#[cfg(feature = "cargo-clippy")]` checks against the
+# destination crate; whitelist that cfg value.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+truce-lv2 = { version = "6.3.0", path = "crates/truce-lv2" }
+truce-lv2-meta = { version = "6.3.0", path = "crates/truce-lv2-meta" }
+
+# truce by sibling checkout. The published form of these three lines
+# pins a git rev (see "Versioning" in README.md); a path keeps a local
+# `truce` + `truce-extensions` pair building against each other without
+# a push in between, which is how the seam actually gets tested.
+truce-core = { version = "6.3.0", path = "../truce/crates/truce-core" }
+truce-params = { version = "6.3.0", path = "../truce/crates/truce-params" }
+truce-build = { version = "6.3.0", path = "../truce/crates/truce-build" }
+truce-utils = { version = "6.3.0", path = "../truce/crates/truce-utils" }
+
+# LV2 carries the state envelope as an `xsd:base64Binary` literal in
+# preset TTLs, on both the render and the restore side.
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"

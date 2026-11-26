@@ -1,0 +1,22 @@
+[package]
+name = "truce-lv2-meta"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "LV2 Turtle rendering for truce plugin metadata"
+
+# Kept separate from `truce-format-lv2` so a consumer that wants to
+# produce a TTL in-process - rather than shelling out to the helper
+# binary - can depend on this alone and skip the arg parsing and JSON.
+[dependencies]
+truce-lv2 = { workspace = true }
+truce-build = { workspace = true }
+# `version_word`, for the `lv2:minorVersion` / `lv2:microVersion` pair.
+truce-utils = { workspace = true }
+base64 = { workspace = true }
+
+[lints]
+workspace = true
