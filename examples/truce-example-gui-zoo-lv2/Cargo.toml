@@ -1,0 +1,36 @@
+[package]
+name = "truce-example-gui-zoo-lv2"
+# Internal-only: a compile gate for the LV2 path, not for crates.io.
+# `publish = false` also keeps it out of scripts/release/topo.py.
+publish = false
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# On by default so every workspace build, clippy and test run compiles
+# the LV2 export - that is what makes this crate a gate rather than a
+# demo someone has to remember to build with `--features lv2`.
+default = ["lv2"]
+lv2 = ["dep:truce-lv2"]
+
+[dependencies]
+truce = { workspace = true }
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+truce-lv2 = { workspace = true, optional = true }
+truce-gui-types = { workspace = true }
+truce-gui = { workspace = true, features = ["cpu"] }
+truce-loader = { workspace = true }
+
+[dev-dependencies]
+truce-test = { workspace = true }
+
+[lints]
+workspace = true

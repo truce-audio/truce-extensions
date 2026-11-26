@@ -1,0 +1,95 @@
+name: CI
+
+# Builds, lints and tests this workspace against a truce checkout. The
+# examples are workspace members with their format features on by
+# default, so a plugin that stops compiling through an out-of-tree
+# format (truce-example-gui-zoo-lv2 for LV2) fails every job below.
+#
+# Runs nightly as well as on change: this repo depends on truce and
+# nothing in truce depends on it, so a truce change that breaks it would
+# otherwise go unnoticed until the next commit here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      truce_ref:
+        description: "truce branch, tag or commit to build against"
+        required: false
+
+env:
+  # The truce development line this repo's major.minor tracks. Move it
+  # with each truce release branch.
+  TRUCE_REF: dev/v7.0.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: truce-extensions
+
+    steps:
+      # The truce dependencies are `../truce` paths, so the two
+      # checkouts have to be siblings.
+      - uses: actions/checkout@v4
+        with:
+          path: truce-extensions
+
+      - uses: actions/checkout@v4
+        with:
+          repository: truce-audio/truce
+          ref: ${{ inputs.truce_ref || env.TRUCE_REF }}
+          path: truce
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: truce-extensions
+          key: ${{ matrix.os }}
+          cache-bin: false
+
+      - name: Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libwayland-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev
+
+      # Before truce cuts the release this repo tracks, its checkout still
+      # carries the previous version; see the script.
+      - name: Align truce version
+        run: scripts/align-truce.sh
+
+      - name: fmt
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: build
+        run: cargo build --workspace --all-targets
+
+      - name: test
+        run: cargo test --workspace

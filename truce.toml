@@ -1,0 +1,19 @@
+# truce project configuration for this repo's examples.
+#
+# `truce::plugin!` reads this at compile time for the plugin's identity,
+# so the examples don't build without it; `cargo truce` reads it to
+# stage bundles (`cargo truce install --lv2 -p truce-example-gui-zoo-lv2`,
+# with `truce-format-lv2` on PATH).
+
+[vendor]
+name = "Truce"
+id = "com.truce"
+url = "https://github.com/truce-audio/truce-extensions"
+au_manufacturer = "Trce"
+
+[[plugin]]
+name = "Truce GUI Zoo LV2"
+bundle_id = "gui-zoo-lv2"
+crate = "truce-example-gui-zoo-lv2"
+category = "effect"
+fourcc = "TZlv"

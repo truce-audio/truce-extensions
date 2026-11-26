@@ -73,9 +73,9 @@ than just state it.
 
 The consequence for development: the sibling truce has to be at the same
 `major.minor`. truce only bumps its version when it releases, so between
-a truce release branch opening and that release being cut, build against
-a truce checkout bumped locally (`truce/scripts/release/bump.sh
---edit-only X.Y.0`).
+a truce release branch opening and that release being cut, run
+`scripts/align-truce.sh` to set your truce checkout's version to this
+workspace's (undo with `git -C ../truce checkout -- Cargo.toml`).
 
 ## Releasing
 
@@ -104,11 +104,38 @@ artifacts. The helper ships through `cargo install truce-format-lv2`.
 ```sh
 git clone https://github.com/truce-audio/truce.git
 git clone https://github.com/truce-audio/truce-extensions.git
-cd truce-extensions && cargo test --workspace
+cd truce-extensions
+scripts/align-truce.sh        # only while truce hasn't released this major.minor yet
+cargo test --workspace
 ```
 
 The two checkouts have to be siblings for the path dependencies to
 resolve.
+
+### Examples
+
+`examples/` holds plugins built through this repo's formats.
+`truce-example-gui-zoo-lv2` is truce's GUI zoo - every built-in widget,
+every range shape, nested enums and meters - compiled as LV2, with the
+`lv2` feature on by default. It is a workspace member, so any
+`cargo build` / `clippy` / `test` of the workspace compiles its LV2
+export and editor: if an LV2 plugin stops compiling, the build fails.
+The repo-root `truce.toml` carries its plugin identity, which
+`truce::plugin!` reads at compile time. To install it into a host:
+
+```sh
+cargo install --path crates/truce-format-lv2   # or: cargo install truce-format-lv2
+cargo truce install --lv2 -p truce-example-gui-zoo-lv2
+```
+
+### CI
+
+`.github/workflows/ci.yml` checks out truce as a sibling at `TRUCE_REF`
+(the development line this repo tracks; overridable per run from
+*Run workflow*), aligns its version, and runs fmt, clippy
+`-D warnings`, build and test on Linux, macOS and Windows - on every
+push and pull request, and nightly, since nothing in truce would
+otherwise notice a change that breaks this repo.
 
 ## Docs
 
