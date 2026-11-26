@@ -219,7 +219,13 @@ impl ConfigView {
                     meta.display()
                 )
             })?;
-        bundle(self.vendor(), &self.plugin, self.version()?, target_os, &root)
+        bundle(
+            self.vendor(),
+            &self.plugin,
+            self.version()?,
+            target_os,
+            &root,
+        )
     }
 
     /// The plugin's URI. `stage` reads it off the rendered
@@ -561,8 +567,7 @@ mod tests {
     /// the helper look broken rather than look like a typo.
     #[test]
     fn the_describe_output_is_valid_json_declaring_this_schema() {
-        let v: serde_json::Value =
-            serde_json::from_str(DESCRIBE).expect("DESCRIBE is valid JSON");
+        let v: serde_json::Value = serde_json::from_str(DESCRIBE).expect("DESCRIBE is valid JSON");
         assert_eq!(v["schema"], SCHEMA);
         assert_eq!(v["format"], "lv2");
         // The binary suffix and the format token have to agree: the

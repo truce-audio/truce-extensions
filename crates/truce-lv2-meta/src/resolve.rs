@@ -369,7 +369,10 @@ mod tests {
         );
         assert_eq!(
             r("sym_skewed(-1, 1, 0.5, 0)"),
-            Lv2Range::Linear { min: -1.0, max: 1.0 }
+            Lv2Range::Linear {
+                min: -1.0,
+                max: 1.0
+            }
         );
         // Reversal keeps the wrapped shape's bounds.
         assert_eq!(
@@ -416,7 +419,10 @@ mod tests {
         let mut p = resolved("Float", "linear(0, 1)");
         p.default_const = true;
         let err = params(&[p]).unwrap_err();
-        assert!(err.contains("`Level`") && err.contains("const `default`"), "{err}");
+        assert!(
+            err.contains("`Level`") && err.contains("const `default`"),
+            "{err}"
+        );
     }
 
     /// An omitted `#[param(default)]` is 0.0 at runtime, so the port's
