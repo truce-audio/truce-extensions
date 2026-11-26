@@ -28,13 +28,11 @@ pub mod uri;
 mod urid;
 
 pub use types::*;
-// The category is re-exported flat because callers name it constantly.
-// The two URI functions are not: the crate root already has a
+// The two URI functions stay under `uri::`: the crate root already has a
 // [`plugin_uri`] / [`ui_uri`] pair taking a `&PluginInfo`, and reaching
 // the primitives as `uri::plugin_uri` keeps "from the parts" and "from
 // the plugin" distinguishable at the call site - better than aliasing
 // one pair into names that don't say what they do.
-pub use uri::Lv2Category;
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
@@ -42,7 +40,6 @@ use std::sync::Arc;
 
 use truce_core::Float;
 use truce_core::buffer::RawBufferScratch;
-use truce_core::bus::BusKind;
 use truce_core::cast::len_u32;
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
@@ -50,7 +47,7 @@ use truce_core::events::{
     Event, EventBody, EventList, TransportInfo, block_event_capacity, initial_event_capacity,
 };
 use truce_core::export::PluginExport;
-use truce_core::info::{PluginCategory, PluginInfo};
+use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
 use truce_core::rt::{RtSection, audit};
 use truce_core::state::shared_plugin_state_hash;
@@ -67,7 +64,9 @@ use crate::urid::{Urid, UridMap};
 // ---------------------------------------------------------------------------
 
 /// Describes where each logical port sits in the flat LV2 port-index space.
-/// Filled in once at `instantiate()` time.
+/// Filled in once at `instantiate()` time, and used by `truce-lv2-meta` to
+/// lay out the TTL, so the indices the host binds and the indices the
+/// runtime reads come from one definition.
 #[derive(Clone, Debug)]
 pub struct PortLayout {
     pub num_audio_in: u32,
@@ -125,13 +124,12 @@ impl PortLayout {
         self.midi_out_start() + self.midi_out_ports
     }
     /// `lv2:freeWheeling` control input, last so it never shifts any
-    /// other port index. Mirrors `truce_lv2_meta::Layout` exactly.
+    /// other port index.
     #[must_use]
     pub fn freewheel_port(&self) -> u32 {
         self.notify_out_port() + 1
     }
-    /// `lv2:reportsLatency` control output. Mirrors
-    /// `truce_lv2_meta::Layout`.
+    /// `lv2:reportsLatency` control output.
     #[must_use]
     pub fn latency_port(&self) -> u32 {
         self.freewheel_port() + 1
@@ -250,116 +248,35 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 /// Build a `PortLayout` from a plugin instance's declared bus layout + params.
 ///
 /// Caller passes in `&P` so the layout extraction reuses the existing
-/// instance rather than constructing a fresh one. The TTL writer paths
-/// build their own plugin and the LV2 `instantiate` callback already
-/// owns one - both call this directly to skip a second `P::create()`.
+/// instance rather than constructing a fresh one. The LV2 `instantiate`
+/// callbacks (DSP and UI) already own one, so neither pays for a second
+/// `P::create()`.
 ///
-/// Returns `None` when `P::bus_layouts()` is empty - the same
-/// plugin-author contract as [`truce_core::wrapper::first_bus_layout`];
-/// zero-bus plugins must return `vec![BusLayout::new()]` explicitly.
-/// The FFI entry points (`instantiate`, `instantiate_ui`) treat `None`
-/// as a graceful instantiation failure (log + null) rather than
-/// panicking across the host boundary.
-/// One-shot warning that a plugin's sidechain input is unavailable in
-/// LV2. Fires once per process on the first instantiation of a sidechain
-/// plugin so the author sees why the extra input is missing without the
-/// message repeating per instance.
-fn warn_lv2_sidechain_dropped_once(channels: u32) {
-    use std::sync::Once;
-    static WARNED: Once = Once::new();
-    WARNED.call_once(|| {
-        eprintln!(
-            "[truce LV2] sidechain input ({channels} ch) unavailable: the LV2 \
-             TTL is generated from the plugin category and can't declare the \
-             sidechain ports yet, so the plugin runs main-only in LV2 hosts."
-        );
-    });
-}
-
+/// LV2 ports are fixed in the TTL, one layout per plugin URI, so the
+/// plugin runs in its first `BUS_LAYOUTS` entry: every channel of every
+/// input bus in declaration order, sidechains included (the flat order the
+/// plugin reads them in), then every output channel. `truce-format-lv2`
+/// renders the TTL from the same entry, read out of the built binary, so
+/// the host binds the indices this lays out.
+///
+/// Returns `None` when `BUS_LAYOUTS` is empty - the same plugin-author
+/// contract as [`truce_core::wrapper::first_bus_layout`]; zero-bus plugins
+/// must declare `&[BusLayout::new()]` explicitly. The FFI entry points
+/// (`instantiate`, `instantiate_ui`) treat `None` as a graceful
+/// instantiation failure (log + null) rather than panicking across the
+/// host boundary.
 pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> Option<PortLayout> {
-    // LV2 ports are fixed in the TTL and can't be reconfigured at runtime,
-    // so a multi-layout plugin exposes only its first (default) layout.
-    // Alternate layouts would need one plugin URI per layout.
     let default_layout = first_bus_layout::<P>()?;
     let params = plugin.params();
-    let param_count = len_u32(params.param_infos().len());
-    let meter_count = len_u32(params.meter_ids().len());
     let info = P::info();
-
-    // The LV2 TTL port count is emitted at compile time from the plugin
-    // category (the derive macro can't call bus_layouts()), so it never
-    // declares the sidechain (non-main) input ports. Presenting them at
-    // runtime would shift every port index past the main bus - the host
-    // binds its output buffers into what the runtime treats as sidechain
-    // input slots. Until the TTL is rendered from the real layout at
-    // install, expose only the main bus so the indices line up and a
-    // sidechain plugin degrades to a plain effect: the sidechain is
-    // dropped, not corrupted.
-    let main_in: u32 = default_layout
-        .inputs
-        .iter()
-        .filter(|b| b.kind == BusKind::Main)
-        .map(|b| b.channels.channel_count())
-        .sum();
-    let dropped_sidechain = default_layout.total_input_channels() - main_in;
-    if dropped_sidechain > 0 {
-        warn_lv2_sidechain_dropped_once(dropped_sidechain);
-    }
-    let num_audio_out = default_layout.total_output_channels();
-
-    // The TTL declares the category's fixed audio-port counts (it can't see
-    // `bus_layouts()`), and the host binds ports against them. If the real
-    // main-bus layout differs, every port index past the audio block shifts
-    // and the host would connect audio buffers where the runtime expects
-    // atom sequences - reading float bits as an `AtomSequence*` and walking
-    // host memory. Refuse to instantiate instead (a clean load failure, not
-    // corruption). The sidechain case above is already reconciled to the
-    // main bus, so a sidechain-on-stereo effect still matches (2, 2).
-    let (decl_in, decl_out) = category_audio_io(info.category);
-    if (main_in, num_audio_out) != (decl_in, decl_out) {
-        warn_lv2_layout_mismatch_once(info.category, (main_in, num_audio_out), (decl_in, decl_out));
-        return None;
-    }
-
     Some(PortLayout {
-        num_audio_in: main_in,
-        num_audio_out,
-        num_params: param_count,
-        num_meters: meter_count,
+        num_audio_in: default_layout.total_input_channels(),
+        num_audio_out: default_layout.total_output_channels(),
+        num_params: len_u32(params.param_infos().len()),
+        num_meters: len_u32(params.meter_ids().len()),
         midi_in_ports: u32::from(info.midi_input_ports),
         midi_out_ports: u32::from(info.midi_output_ports),
     })
-}
-
-/// The category's declared `(audio_in, audio_out)` TTL port counts. Maps
-/// the runtime [`PluginCategory`] onto the same [`Lv2Category`] contract
-/// the TTL renderer binds against, so the two never drift.
-fn category_audio_io(category: PluginCategory) -> (u32, u32) {
-    let lv2 = match category {
-        PluginCategory::Instrument => Lv2Category::Instrument,
-        PluginCategory::Effect => Lv2Category::Effect,
-        PluginCategory::NoteEffect => Lv2Category::NoteEffect,
-        PluginCategory::Analyzer => Lv2Category::Analyzer,
-        PluginCategory::Tool => Lv2Category::Tool,
-    };
-    lv2.audio_io()
-}
-
-/// One-shot warning that a plugin's real audio layout doesn't match the
-/// TTL's category-default ports, so LV2 instantiation is refused (rather
-/// than laying out shifted ports over host buffers).
-fn warn_lv2_layout_mismatch_once(category: PluginCategory, got: (u32, u32), declared: (u32, u32)) {
-    use std::sync::Once;
-    static WARNED: Once = Once::new();
-    WARNED.call_once(|| {
-        eprintln!(
-            "[truce LV2] refusing to instantiate: the plug-in's audio layout \
-             {got:?} (in, out) doesn't match the {category:?} category's LV2 TTL \
-             ports {declared:?}. The LV2 TTL is generated from the category and \
-             can't declare a non-default channel count yet; use the category's \
-             default layout for LV2, or the plug-in loads only in non-LV2 formats."
-        );
-    });
 }
 
 /// # Safety
@@ -1354,5 +1271,34 @@ mod uri_tests {
     fn the_ui_uri_is_the_plugin_uri_fragment() {
         let info = info_with("https://example.com", "my-gain");
         assert_eq!(ui_uri(&info), "https://example.com/lv2/my-gain#ui");
+    }
+}
+
+#[cfg(test)]
+mod port_layout_tests {
+    use super::PortLayout;
+
+    /// The TTL renderer lays ports out with this same type, so these
+    /// indices are what the host binds as well as what `run` reads.
+    #[test]
+    fn multi_port_layout_indices_are_contiguous() {
+        // 2 audio in/out + 1 param + 2 midi-in + 2 midi-out + notify.
+        let layout = PortLayout {
+            num_audio_in: 2,
+            num_audio_out: 2,
+            num_params: 1,
+            num_meters: 0,
+            midi_in_ports: 2,
+            midi_out_ports: 2,
+        };
+        assert_eq!(layout.atom_in_start(), 5); // after 2+2 audio + 1 param
+        assert_eq!(layout.num_atom_in(), 2);
+        assert_eq!(layout.midi_out_start(), 7);
+        assert_eq!(layout.notify_out_port(), 9);
+        // Freewheel + latency control ports are last, so `total` is
+        // notify + 3.
+        assert_eq!(layout.freewheel_port(), 10);
+        assert_eq!(layout.latency_port(), 11);
+        assert_eq!(layout.total(), 12);
     }
 }

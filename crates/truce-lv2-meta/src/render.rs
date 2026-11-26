@@ -3,9 +3,10 @@
 //!
 //! Runs at package time, driven by `truce-format-lv2`, against the
 //! format-neutral metadata tree `derive(Params)` wrote while the cdylib
-//! compiled. No dlopen is involved at any point, which is what makes
-//! cross-arch LV2 bundles viable: the binary being described doesn't
-//! have to load on the machine describing it.
+//! compiled and the bus-layout table `truce::plugin!` embedded in it. No
+//! dlopen is involved at any point, which is what makes cross-arch LV2
+//! bundles viable: the binary being described doesn't have to load on the
+//! machine describing it.
 //!
 //! Inputs are plain `String`s / enums / `Vec<Lv2Param>`s rather than
 //! the `truce-core` / `truce-params` types, so rendering text about a
@@ -15,7 +16,20 @@ use base64::Engine as _;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-use truce_lv2::Lv2Category;
+use truce_build::bus_table::{BusRecord, LayoutRecord};
+use truce_lv2::PortLayout;
+
+/// A plugin category as LV2 names it: the `lv2:*Plugin` class the TTL
+/// declares. Distinct from `truce_core::info::PluginCategory` so rendering
+/// text about a plugin doesn't depend on its runtime types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lv2Category {
+    Instrument,
+    Effect,
+    NoteEffect,
+    Analyzer,
+    Tool,
+}
 
 /// Top-level inputs to the TTL renderer.
 #[derive(Debug, Clone)]
@@ -34,11 +48,11 @@ pub struct Lv2Bundle {
     /// UI URI. Convention is `<plugin_uri>#ui`.
     pub ui_uri: String,
     pub category: Lv2Category,
-    /// Audio inputs / outputs in the default bus layout. The TTL
-    /// renderer only writes the first bus layout's channel counts; the
-    /// rest of the configuration matrix is for the runtime to map.
-    pub audio_in: u32,
-    pub audio_out: u32,
+    /// The plugin's first bus layout, as `truce::plugin!` embedded it in
+    /// the built binary (see [`truce_build::bus_table`]). LV2 ports are
+    /// fixed in the TTL, so this is the one layout the plugin runs in -
+    /// the runtime's `truce_lv2::derive_port_layout` picks the same entry.
+    pub audio: LayoutRecord,
     /// Number of MIDI input ports. `0` or `1` both yield a single atom
     /// input port (it always exists to carry `time:Position`); `>1` adds
     /// MIDI-only atom input ports after it.
@@ -192,70 +206,14 @@ impl Lv2Param {
     }
 }
 
-/// Layout indices used to lay out LV2 ports in the TTL. Mirrors the
-/// runtime `PortLayout` in `truce-lv2` exactly - the two must agree on
-/// every port index.
-struct Layout {
-    audio_in: u32,
-    audio_out: u32,
-    num_params: u32,
-    num_meters: u32,
-    midi_in_ports: u32,
-    midi_out_ports: u32,
-}
-
-impl Layout {
-    fn audio_in_start() -> u32 {
-        0
-    }
-    fn audio_out_start(&self) -> u32 {
-        self.audio_in
-    }
-    fn control_start(&self) -> u32 {
-        self.audio_in + self.audio_out
-    }
-    fn meter_start(&self) -> u32 {
-        self.control_start() + self.num_params
-    }
-    fn atom_in_start(&self) -> u32 {
-        self.meter_start() + self.num_meters
-    }
-    /// Atom input ports: one transport/control port always, plus one
-    /// per extra declared MIDI input beyond the first.
-    fn num_atom_in(&self) -> u32 {
-        self.midi_in_ports.max(1)
-    }
-    fn midi_out_start(&self) -> u32 {
-        self.atom_in_start() + self.num_atom_in()
-    }
-    fn notify_out_port(&self) -> u32 {
-        self.midi_out_start() + self.midi_out_ports
-    }
-    /// `lv2:freeWheeling` control input, last so it never shifts any
-    /// other port index. Hosts that support freewheel drive it to `1`
-    /// during an offline export; the rest leave it at its `0` default.
-    fn freewheel_port(&self) -> u32 {
-        self.notify_out_port() + 1
-    }
-    /// `lv2:reportsLatency` control output. The plugin writes its
-    /// current latency (samples) here each `run()`; the host reads it
-    /// for delay compensation. Native LV2 dynamic-latency support.
-    fn latency_port(&self) -> u32 {
-        self.freewheel_port() + 1
-    }
-    fn total(&self) -> u32 {
-        self.latency_port() + 1
-    }
-}
-
 /// Returns `(manifest.ttl, plugin.ttl)` rendered for `bundle`.
 /// `so_name` is the bundle-relative filename (e.g. `truce-gain.so`)
 /// that ends up in `lv2:binary <…>`.
 #[must_use]
 pub fn render_ttls(bundle: &Lv2Bundle, so_name: &str) -> (String, String) {
-    let layout = Layout {
-        audio_in: bundle.audio_in,
-        audio_out: bundle.audio_out,
+    let layout = PortLayout {
+        num_audio_in: bundle.audio.input_channels(),
+        num_audio_out: bundle.audio.output_channels(),
         num_params: u32::try_from(bundle.params.len()).unwrap_or(u32::MAX),
         num_meters: u32::try_from(bundle.meter_ids.len()).unwrap_or(u32::MAX),
         midi_in_ports: bundle.midi_in_ports,
@@ -266,7 +224,12 @@ pub fn render_ttls(bundle: &Lv2Bundle, so_name: &str) -> (String, String) {
     (manifest, plugin_ttl)
 }
 
-fn render_manifest(b: &Lv2Bundle, layout: &Layout, ttl_basename: &str, so_name: &str) -> String {
+fn render_manifest(
+    b: &Lv2Bundle,
+    layout: &PortLayout,
+    ttl_basename: &str,
+    so_name: &str,
+) -> String {
     let mut f = String::new();
     let _ = writeln!(f, "@prefix lv2:  <http://lv2plug.in/ns/lv2core#> .");
     let _ = writeln!(f, "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .");
@@ -310,7 +273,7 @@ fn render_manifest(b: &Lv2Bundle, layout: &Layout, ttl_basename: &str, so_name: 
     f
 }
 
-fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
+fn render_plugin_ttl(b: &Lv2Bundle, layout: &PortLayout, so_name: &str) -> String {
     let symbols = resolve_param_symbols(&b.params);
     let mut f = String::new();
     let _ = writeln!(f, "@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .");
@@ -431,20 +394,20 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
     f
 }
 
-fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_symbols: &[String]) {
+fn emit_port(
+    f: &mut String,
+    index: u32,
+    b: &Lv2Bundle,
+    layout: &PortLayout,
+    param_symbols: &[String],
+) {
     let _ = writeln!(f);
     if index < layout.audio_out_start() {
-        let ch = index - Layout::audio_in_start();
-        let _ = writeln!(f, "        a lv2:InputPort, lv2:AudioPort ;");
-        let _ = writeln!(f, "        lv2:index {index} ;");
-        let _ = writeln!(f, "        lv2:symbol \"in_{ch}\" ;");
-        let _ = writeln!(f, "        lv2:name \"Audio In {}\" ;", ch + 1);
+        let ch = index - layout.audio_in_start();
+        emit_audio_port(f, index, "Input", "in", ch, &b.audio.inputs);
     } else if index < layout.control_start() {
         let ch = index - layout.audio_out_start();
-        let _ = writeln!(f, "        a lv2:OutputPort, lv2:AudioPort ;");
-        let _ = writeln!(f, "        lv2:index {index} ;");
-        let _ = writeln!(f, "        lv2:symbol \"out_{ch}\" ;");
-        let _ = writeln!(f, "        lv2:name \"Audio Out {}\" ;", ch + 1);
+        emit_audio_port(f, index, "Output", "out", ch, &b.audio.outputs);
     } else if index < layout.meter_start() {
         let slot = (index - layout.control_start()) as usize;
         let p = &b.params[slot];
@@ -500,6 +463,68 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
             "        lv2:portProperty lv2:reportsLatency, lv2:integer, pprop:notOnGUI ;"
         );
     }
+}
+
+/// One audio port: flat channel `ch` of a direction's buses, laid out bus
+/// by bus in declaration order. Symbols number the flat channels
+/// (`in_0`, `in_1`, ...) whatever the buses, so adding a bus after the
+/// first never renames a port a saved session refers to. The first bus
+/// keeps the generic `Audio In 1` names; channels of later buses are
+/// named after their bus (`Sidechain 1`).
+///
+/// Buses after the first in each direction are `lv2:connectionOptional`:
+/// a host that doesn't route a sidechain or an aux output may leave its
+/// ports unconnected, and the runtime feeds the plugin silence / scratch
+/// in their place. A sidechain bus's ports also carry `lv2:isSideChain`,
+/// so hosts that route sidechains know which inputs they are.
+fn emit_audio_port(
+    f: &mut String,
+    index: u32,
+    direction: &str,
+    symbol: &str,
+    ch: u32,
+    buses: &[BusRecord],
+) {
+    let (position, bus, bus_ch) =
+        locate_channel(buses, ch).expect("the port layout sized the audio ports from these buses");
+    let name = if position == 0 {
+        let label = if direction == "Input" { "In" } else { "Out" };
+        format!("Audio {label} {}", ch + 1)
+    } else {
+        format!("{} {}", escape_turtle(&bus.name), bus_ch + 1)
+    };
+    let _ = writeln!(f, "        a lv2:{direction}Port, lv2:AudioPort ;");
+    let _ = writeln!(f, "        lv2:index {index} ;");
+    let _ = writeln!(f, "        lv2:symbol \"{symbol}_{ch}\" ;");
+    let _ = writeln!(f, "        lv2:name \"{name}\" ;");
+    match (position > 0, bus.sidechain) {
+        (true, true) => {
+            let _ = writeln!(
+                f,
+                "        lv2:portProperty lv2:connectionOptional, lv2:isSideChain ;"
+            );
+        }
+        (true, false) => {
+            let _ = writeln!(f, "        lv2:portProperty lv2:connectionOptional ;");
+        }
+        (false, true) => {
+            let _ = writeln!(f, "        lv2:portProperty lv2:isSideChain ;");
+        }
+        (false, false) => {}
+    }
+}
+
+/// Which bus flat channel `ch` belongs to: the bus's position, the bus,
+/// and the channel's index within it.
+fn locate_channel(buses: &[BusRecord], ch: u32) -> Option<(usize, &BusRecord, u32)> {
+    let mut first = 0;
+    for (position, bus) in buses.iter().enumerate() {
+        if ch < first + bus.channels {
+            return Some((position, bus, ch - first));
+        }
+        first += bus.channels;
+    }
+    None
 }
 
 /// Atom input port. `port` is the 0-based MIDI input index. Port 0 is
@@ -631,7 +656,7 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
 
 /// Public, id-paired view of `resolve_param_symbols`: the exact
 /// `lv2:symbol` the manifest assigns each control port, paired with its
-/// truce param id, in declaration order. [`crate::lv2_meta::param_symbols`]
+/// truce param id, in declaration order. [`crate::param_symbols`]
 /// re-derives this from the metadata tree so the install-time preset
 /// emitter can turn a preset's param ids into `lv2:port` / `pset:value`
 /// entries that port-based hosts (REAPER) apply through the control
@@ -888,10 +913,18 @@ mod tests {
     // renderer and the runtime is pinned in this crate's own tests.
     use truce_lv2::uri::{plugin_uri, ui_uri};
 
+    fn stereo(name: &str, sidechain: bool) -> BusRecord {
+        BusRecord {
+            name: name.into(),
+            channels: 2,
+            sidechain,
+        }
+    }
+
     fn bundle(category: Lv2Category, accepts_midi_in: bool, params: Vec<Lv2Param>) -> Lv2Bundle {
-        let (audio_in, audio_out) = match category {
-            Lv2Category::Instrument | Lv2Category::NoteEffect => (0, 2),
-            _ => (2, 2),
+        let inputs = match category {
+            Lv2Category::Instrument | Lv2Category::NoteEffect => vec![],
+            _ => vec![stereo("Main", false)],
         };
         Lv2Bundle {
             plugin_name: "Test".into(),
@@ -901,8 +934,10 @@ mod tests {
             uri: plugin_uri("https://example.com", "test"),
             ui_uri: ui_uri("https://example.com", "test"),
             category,
-            audio_in,
-            audio_out,
+            audio: LayoutRecord {
+                inputs,
+                outputs: vec![stereo("Main", false)],
+            },
             midi_in_ports: u32::from(accepts_midi_in),
             midi_out_ports: 0,
             params,
@@ -1012,26 +1047,91 @@ mod tests {
         assert!(!extra.contains("time:Position"));
     }
 
+    /// The block of the port whose `lv2:symbol` is `symbol`.
+    fn port_block<'t>(ttl: &'t str, symbol: &str) -> &'t str {
+        let at = ttl
+            .find(&format!("lv2:symbol \"{symbol}\""))
+            .unwrap_or_else(|| panic!("no port {symbol}:\n{ttl}"));
+        let start = ttl[..at].rfind('[').expect("a port block opens");
+        let end = at + ttl[at..].find(']').expect("a port block closes");
+        &ttl[start..end]
+    }
+
+    /// The default stereo effect keeps the generic names and flat symbols
+    /// it always had, so its TTL - and every saved session's port
+    /// bindings - is unchanged by rendering from the real layout.
     #[test]
-    fn multi_port_layout_indices_are_contiguous() {
-        // 2 audio in/out + 1 param + 2 midi-in + 2 midi-out + notify.
-        let layout = Layout {
-            audio_in: 2,
-            audio_out: 2,
-            num_params: 1,
-            num_meters: 0,
-            midi_in_ports: 2,
-            midi_out_ports: 2,
-        };
-        assert_eq!(layout.atom_in_start(), 5); // after 2+2 audio + 1 param
-        assert_eq!(layout.num_atom_in(), 2);
-        assert_eq!(layout.midi_out_start(), 7);
-        assert_eq!(layout.notify_out_port(), 9);
-        // Freewheel + latency control ports are last, so `total` is
-        // notify + 3.
-        assert_eq!(layout.freewheel_port(), 10);
-        assert_eq!(layout.latency_port(), 11);
-        assert_eq!(layout.total(), 12);
+    fn a_single_main_bus_keeps_the_generic_port_names() {
+        let (_m, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
+        for (symbol, name) in [
+            ("in_0", "Audio In 1"),
+            ("in_1", "Audio In 2"),
+            ("out_0", "Audio Out 1"),
+            ("out_1", "Audio Out 2"),
+        ] {
+            assert!(
+                port_block(&ttl, symbol).contains(&format!("lv2:name \"{name}\"")),
+                "{symbol} should be named {name}:\n{ttl}"
+            );
+        }
+        assert!(!ttl.contains("isSideChain"));
+        assert!(!ttl.contains("connectionOptional"));
+    }
+
+    /// A sidechain bus gets ports after the main input's, flagged
+    /// `lv2:isSideChain` and optional, named after the bus, and every port past
+    /// the audio block shifts by its channel count - the same indices
+    /// `truce_lv2::derive_port_layout` lays out at runtime.
+    #[test]
+    fn a_sidechain_input_gets_its_own_flagged_ports() {
+        let mut b = bundle(Lv2Category::Effect, false, vec![]);
+        b.audio.inputs.push(stereo("Key", true));
+        let (_m, ttl) = render_ttls(&b, "x.so");
+
+        let main = port_block(&ttl, "in_1");
+        assert!(main.contains("lv2:name \"Audio In 2\""));
+        assert!(!main.contains("isSideChain"));
+        for (symbol, index, name) in [("in_2", 2, "Key 1"), ("in_3", 3, "Key 2")] {
+            let port = port_block(&ttl, symbol);
+            assert!(port.contains("a lv2:InputPort, lv2:AudioPort"), "{port}");
+            assert!(port.contains(&format!("lv2:index {index} ;")), "{port}");
+            assert!(port.contains(&format!("lv2:name \"{name}\"")), "{port}");
+            assert!(
+                port.contains("lv2:portProperty lv2:connectionOptional, lv2:isSideChain"),
+                "{port}"
+            );
+        }
+        assert!(port_block(&ttl, "out_0").contains("lv2:index 4 ;"));
+        assert!(port_block(&ttl, "midi_in").contains("lv2:index 6 ;"));
+    }
+
+    /// Extra output buses are plain outputs named after their bus.
+    #[test]
+    fn aux_outputs_are_named_after_their_bus() {
+        let mut b = bundle(Lv2Category::Instrument, false, vec![]);
+        b.audio.outputs.push(stereo("Aux", false));
+        let (_m, ttl) = render_ttls(&b, "x.so");
+
+        let aux = port_block(&ttl, "out_3");
+        assert!(aux.contains("a lv2:OutputPort, lv2:AudioPort"), "{aux}");
+        assert!(aux.contains("lv2:index 3 ;"), "{aux}");
+        assert!(aux.contains("lv2:name \"Aux 2\""), "{aux}");
+        assert!(
+            aux.contains("lv2:portProperty lv2:connectionOptional ;"),
+            "{aux}"
+        );
+        assert!(!port_block(&ttl, "out_1").contains("connectionOptional"));
+        assert!(!ttl.contains("isSideChain"));
+    }
+
+    /// A bus name is the plugin author's string, so it's escaped like
+    /// every other one the TTL quotes.
+    #[test]
+    fn bus_names_are_turtle_escaped() {
+        let mut b = bundle(Lv2Category::Effect, false, vec![]);
+        b.audio.inputs.push(stereo("Side \"chain\"", true));
+        let (_m, ttl) = render_ttls(&b, "x.so");
+        assert!(port_block(&ttl, "in_2").contains(r#"lv2:name "Side \"chain\" 1""#));
     }
 
     #[test]

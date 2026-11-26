@@ -20,8 +20,10 @@ A runtime wrapper links into the plugin and exports the format's C ABI;
 `truce::plugin!` emits an `export_<format>!` arm for it under
 `#[cfg(feature = "<format>")]`, resolved in the plugin's own crate. A
 `truce-format-<format>` helper binary on `PATH` renders the bundle at
-package time: `cargo truce` discovers it, and it reads the format-neutral
-metadata tree truce's derives write, through a versioned JSON protocol.
+package time: `cargo truce` discovers it through a versioned JSON
+protocol, and it reads the format-neutral metadata truce leaves behind -
+the parameter tree its derives write, and the bus-layout table
+`truce::plugin!` embeds in the binary - without running the plugin.
 A format with a new feature name also needs its arm added to
 `truce::plugin!` - the one change on truce's side.
 
@@ -77,7 +79,7 @@ diagnostic rather than a silent skip.
 ## Compatibility
 
 Extensions link against truce's own crates, and the format helper
-protocol and metadata tree are versioned (`schema = 1`), so the rule is to
+protocol, metadata tree and bus-layout table are versioned, so the rule is to
 match `major.minor`:
 
 | truce | truce-extensions |

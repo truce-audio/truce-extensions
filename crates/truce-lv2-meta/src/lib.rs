@@ -17,28 +17,28 @@
 //! This crate is the render side only. It is not linked into shipped
 //! plugin binaries - [`truce_lv2`] is - and it depends on that crate
 //! rather than the reverse, because the two must agree on the plugin
-//! URI and a category's port counts and the runtime is the side that
-//! cannot afford to be wrong.
+//! URI and the port indices (`truce_lv2::PortLayout`), and the runtime is
+//! the side that cannot afford to be wrong.
 
 pub mod render;
 pub mod resolve;
 
 pub use render::{
-    Lv2Bundle, Lv2Flags, Lv2MidiBinding, Lv2MidiSource, Lv2Param, Lv2Range, Lv2UiType, Lv2Unit,
-    PRESET_MANIFEST_PREFIXES, lv2_version, preset_uri, render_preset_manifest_entry,
+    Lv2Bundle, Lv2Category, Lv2Flags, Lv2MidiBinding, Lv2MidiSource, Lv2Param, Lv2Range, Lv2UiType,
+    Lv2Unit, PRESET_MANIFEST_PREFIXES, lv2_version, preset_uri, render_preset_manifest_entry,
     render_preset_ttl, render_ttls, resolved_param_symbols,
 };
 pub use resolve::{Vendor, bundle, lv2_category, param_symbols, params};
 // Re-exported from the runtime crate so a consumer that only renders
 // metadata - the `truce-format-lv2` helper, say - doesn't name the
 // plugin runtime directly just to spell a URI the same way.
-pub use truce_lv2::Lv2Category;
 pub use truce_lv2::uri::{plugin_uri, ui_uri};
 
 #[cfg(test)]
 mod tests {
     use super::{Vendor, bundle};
     use truce_build::PluginDef;
+    use truce_build::bus_table::LayoutRecord;
     use truce_build::meta::ResolvedRoot;
 
     /// The cross-crate half of the URI contract: what the manifest
@@ -61,8 +61,15 @@ mod tests {
             name: "Vendor",
             url: "https://example.com",
         };
-        let b = bundle(vendor, &plugin, "1.2.3", "macos", &ResolvedRoot::default())
-            .expect("an effect with no parameters renders");
+        let b = bundle(
+            vendor,
+            &plugin,
+            "1.2.3",
+            "macos",
+            &ResolvedRoot::default(),
+            LayoutRecord::default(),
+        )
+        .expect("an effect with no parameters renders");
 
         assert_eq!(
             b.uri,
@@ -72,28 +79,5 @@ mod tests {
             b.ui_uri,
             truce_lv2::uri::ui_uri("https://example.com", "my-gain")
         );
-    }
-
-    /// The TTL's declared port counts come from the same
-    /// `Lv2Category::audio_io` the runtime's `derive_port_layout` reads.
-    /// If they ever diverge the host connects audio buffers where the
-    /// plugin expects atom sequences.
-    #[test]
-    fn declared_ports_match_the_category_contract() {
-        let plugin = PluginDef {
-            name: "My Synth".into(),
-            bundle_id: "my-synth".into(),
-            category: "instrument".into(),
-            ..PluginDef::default()
-        };
-        let vendor = Vendor {
-            name: "Vendor",
-            url: "",
-        };
-        let b = bundle(vendor, &plugin, "1.0.0", "linux", &ResolvedRoot::default())
-            .expect("an instrument with no parameters renders");
-
-        let (audio_in, audio_out) = truce_lv2::Lv2Category::Instrument.audio_io();
-        assert_eq!((b.audio_in, b.audio_out), (audio_in, audio_out));
     }
 }

@@ -21,12 +21,13 @@
 //! feature. They are packaging errors now, raised when the helper
 //! actually renders a bundle.
 
+use truce_build::bus_table::LayoutRecord;
 use truce_build::meta::{ResolvedParam, ResolvedRoot};
 use truce_build::{Category, PluginDef};
-use truce_lv2::Lv2Category;
 
 use crate::render::{
-    Lv2Bundle, Lv2Flags, Lv2MidiBinding, Lv2MidiSource, Lv2Param, Lv2Range, Lv2UiType, Lv2Unit,
+    Lv2Bundle, Lv2Category, Lv2Flags, Lv2MidiBinding, Lv2MidiSource, Lv2Param, Lv2Range, Lv2UiType,
+    Lv2Unit,
 };
 
 /// The `[vendor]` fields the TTL's `doap:maintainer` block needs.
@@ -59,7 +60,9 @@ pub fn lv2_category(c: Category) -> Lv2Category {
 /// [`truce_build::effective_plugin_version`]) so the TTL can't disagree
 /// with the version the loaded plugin reports. `target_os` is the OS
 /// the bundle is *for*, which on a cross-compile is not the one doing
-/// the rendering; it picks the UI type (see [`Lv2UiType`]).
+/// the rendering; it picks the UI type (see [`Lv2UiType`]). `audio` is the
+/// plugin's first bus layout, read out of its built binary with
+/// [`truce_build::bus_table::read_from_binary`].
 ///
 /// # Errors
 ///
@@ -71,6 +74,7 @@ pub fn bundle(
     version: &str,
     target_os: &str,
     root: &ResolvedRoot,
+    audio: LayoutRecord,
 ) -> Result<Lv2Bundle, String> {
     let category = lv2_category(truce_build::parse_plugin_category(&plugin.category)?);
     // The same wiring resolution baked onto `PluginInfo`, so the TTL's
@@ -82,7 +86,6 @@ pub fn bundle(
         plugin.midi_input_ports,
         plugin.midi_output_ports,
     )?;
-    let (audio_in, audio_out) = category.audio_io();
     Ok(Lv2Bundle {
         plugin_name: display_name(plugin),
         vendor: vendor.name.to_string(),
@@ -91,8 +94,7 @@ pub fn bundle(
         url: vendor.url.to_string(),
         version: version.to_string(),
         category,
-        audio_in,
-        audio_out,
+        audio,
         midi_in_ports: u32::from(wiring.input_ports),
         midi_out_ports: u32::from(wiring.output_ports),
         params: params(&root.params)?,

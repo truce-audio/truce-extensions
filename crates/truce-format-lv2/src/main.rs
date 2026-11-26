@@ -38,6 +38,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use truce_build::PluginDef;
+use truce_build::bus_table::LayoutRecord;
 use truce_lv2_meta::{
     Lv2Bundle, PRESET_MANIFEST_PREFIXES, Vendor, bundle, param_symbols, plugin_uri,
     render_preset_manifest_entry, render_preset_ttl, render_ttls,
@@ -207,8 +208,9 @@ impl ConfigView {
     }
 
     /// Assemble the renderer's input, reading the parameter list out of
-    /// the metadata tree at `meta`.
-    fn bundle(&self, meta: &Path, target_os: &str) -> Result<Lv2Bundle, Error> {
+    /// the metadata tree at `meta` and the audio ports out of the
+    /// bus-layout table `truce::plugin!` embedded in `dylib`.
+    fn bundle(&self, meta: &Path, dylib: &Path, target_os: &str) -> Result<Lv2Bundle, Error> {
         let root = truce_build::meta::read_root(meta)
             .and_then(|r| truce_build::meta::resolve_root(meta, &r.root))
             .map_err(|e| {
@@ -225,7 +227,24 @@ impl ConfigView {
             self.version()?,
             target_os,
             &root,
+            self.audio_layout(dylib)?,
         )
+    }
+
+    /// The plugin's first bus layout - the one an LV2 plugin runs in,
+    /// since its ports are fixed in the TTL - read out of the built
+    /// binary without loading it, so a cross build renders too.
+    fn audio_layout(&self, dylib: &Path) -> Result<LayoutRecord, Error> {
+        truce_build::bus_table::read_from_binary(dylib, &self.plugin.crate_name)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                format!(
+                    "`{}` declares no bus layouts; a plugin with no audio I/O declares \
+                     `&[BusLayout::new()]`",
+                    self.plugin.crate_name
+                )
+            })
     }
 
     /// The plugin's URI. `stage` reads it off the rendered
@@ -309,7 +328,7 @@ fn stage() -> Result<(), Error> {
     check_schema(request.schema)?;
 
     let view = ConfigView::read(&request.config)?;
-    let b = view.bundle(&request.meta, &request.target_os)?;
+    let b = view.bundle(&request.meta, &request.dylib, &request.target_os)?;
 
     // The binary's name has to match what the TTL's `lv2:binary` IRI
     // resolves against, and both derive from the bundle directory
