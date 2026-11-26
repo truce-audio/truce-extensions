@@ -962,6 +962,11 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
             bottom: i32,
         }
 
+        // Named explicitly: inside a plugin something else (baseview's
+        // Windows deps) always links user32, but `truce-format-lv2` and
+        // `truce-lv2-meta`'s tests link this crate without it, and
+        // `link.exe` then can't resolve these three.
+        #[link(name = "user32")]
         unsafe extern "system" {
             fn SetWindowPos(
                 hwnd: *mut c_void,
