@@ -30,7 +30,7 @@ in-tree formats use:
 lv2 = ["dep:truce-lv2"]
 
 [dependencies]
-truce-lv2 = { version = "6.3", optional = true }
+truce-lv2 = { version = "7.0", optional = true }
 ```
 
 `truce::plugin!` already emits the `::truce_lv2::export_lv2!` arm under
@@ -58,16 +58,46 @@ practical rule is to match `major.minor`:
 
 | truce | truce-extensions |
 |-------|------------------|
-| 6.3.x | 6.3.x            |
+| 7.0.x | 7.0.x            |
 
 ## Versioning
 
 The workspace dependencies on truce are path dependencies on a sibling
-`../truce` checkout. That keeps a local pair building against each other
-without a push in between, which is the only way the seam actually gets
-exercised during development. A release replaces them with a pinned git
-rev or a registry version — a published crate cannot carry a path
-outside its own package.
+`../truce` checkout, each carrying a `~X.Y` requirement for this
+workspace's `major.minor`. The path keeps a local pair building against
+each other without a push in between, which is the only way the seam
+actually gets exercised. At publish, cargo strips the paths and keeps
+the requirements, so a published crate resolves truce from crates.io -
+and `~X.Y` makes cargo enforce the compatibility table above rather
+than just state it.
+
+The consequence for development: the sibling truce has to be at the same
+`major.minor`. truce only bumps its version when it releases, so between
+a truce release branch opening and that release being cut, build against
+a truce checkout bumped locally (`truce/scripts/release/bump.sh
+--edit-only X.Y.0`).
+
+## Releasing
+
+truce releases first; this repo follows. The scripts mirror truce's
+`scripts/release/`:
+
+```sh
+scripts/release/bump.sh <patch|minor|major|X.Y.Z>   # version + ~X.Y truce requirement, Cargo.lock, commit
+scripts/release/release.sh --dry-run                # checks only: version drift, truce on crates.io, publish order
+scripts/release/release.sh                          # tag, publish, push tag, GitHub Release
+```
+
+- `bump.sh` refuses a new `major.minor` the sibling truce isn't at.
+- `release.sh` refuses to tag until every truce crate this workspace
+  depends on has an `X.Y.*` release on crates.io, since `cargo publish`
+  resolves them from there. Every step is idempotent, so re-run it after
+  a partial failure.
+- Publish order (`topo.py`) is `truce-lv2` → `truce-lv2-meta` →
+  `truce-format-lv2`, computed from `cargo metadata` rather than listed.
+
+There is no `upload-dist.sh` counterpart: this repo builds no plugin
+artifacts. The helper ships through `cargo install truce-format-lv2`.
 
 ## Development
 

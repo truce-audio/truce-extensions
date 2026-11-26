@@ -351,7 +351,7 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "truce-build"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "base64",
  "serde",
@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "truce-format-lv2"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "base64",
  "serde",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "truce-lv2"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "base64",
  "objc",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "truce-lv2-meta"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "base64",
  "truce-build",
@@ -407,14 +407,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "bitflags",
 ]
 
 [[package]]
 name = "truce-utils"
-version = "6.3.0"
+version = "7.0.0"
 
 [[package]]
 name = "unicode-ident"

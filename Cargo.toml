@@ -10,7 +10,7 @@ members = [
 # The repos release independently, so this is a deliberate mirror rather
 # than a shared workspace version.
 [workspace.package]
-version = "6.3.0"
+version = "7.0.0"
 edition = "2024"
 license = "LicenseRef-TruceLicense-1.0"
 rust-version = "1.95"
@@ -28,17 +28,18 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 pedantic = { level = "warn", priority = -1 }
 
 [workspace.dependencies]
-truce-lv2 = { version = "6.3.0", path = "crates/truce-lv2" }
-truce-lv2-meta = { version = "6.3.0", path = "crates/truce-lv2-meta" }
+truce-lv2 = { version = "7.0.0", path = "crates/truce-lv2" }
+truce-lv2-meta = { version = "7.0.0", path = "crates/truce-lv2-meta" }
 
-# truce by sibling checkout. The published form of these three lines
-# pins a git rev (see "Versioning" in README.md); a path keeps a local
-# `truce` + `truce-extensions` pair building against each other without
-# a push in between, which is how the seam actually gets tested.
-truce-core = { version = "6.3.0", path = "../truce/crates/truce-core" }
-truce-params = { version = "6.3.0", path = "../truce/crates/truce-params" }
-truce-build = { version = "6.3.0", path = "../truce/crates/truce-build" }
-truce-utils = { version = "6.3.0", path = "../truce/crates/truce-utils" }
+# truce by sibling checkout, so a local `truce` + `truce-extensions` pair
+# builds against each other without a push in between - which is how the
+# seam actually gets tested. `cargo publish` strips the paths and keeps
+# the `~X.Y` requirement, which scripts/release/bump.sh sets to this
+# workspace's major.minor (see "Versioning" in README.md).
+truce-core = { version = "~7.0", path = "../truce/crates/truce-core" }
+truce-params = { version = "~7.0", path = "../truce/crates/truce-params" }
+truce-build = { version = "~7.0", path = "../truce/crates/truce-build" }
+truce-utils = { version = "~7.0", path = "../truce/crates/truce-utils" }
 
 # LV2 carries the state envelope as an `xsd:base64Binary` literal in
 # preset TTLs, on both the render and the restore side.
