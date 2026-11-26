@@ -1,29 +1,41 @@
 # truce-extensions
 
-Plugin formats for [truce](https://github.com/truce-audio/truce) that
-live outside the main repo.
+Extensions for [truce](https://github.com/truce-audio/truce): crates that
+build on truce's public API and release on their own schedule. Plugin
+formats, editor backends, DSP and GUI components, tooling - anything that
+depends on truce, with nothing in truce depending on it.
 
-Right now that means LV2. Everything here depends on truce; nothing in
-truce depends on anything here. That direction is the whole point of
-the split — truce ships a format-neutral metadata contract and an
-external-helper protocol, and a format can be built, versioned and
-released against them without being in the framework's tree.
+## What's here
 
-## Crates
+| Extension | Crates |
+|-----------|--------|
+| LV2 plugin format | `truce-lv2`, `truce-lv2-meta`, `truce-format-lv2` |
 
-| Crate | What it is |
-|-------|------------|
-| `truce-lv2` | The LV2 runtime wrapper. Links into your plugin binary and exports the LV2 C ABI. |
-| `truce-lv2-meta` | Renders `manifest.ttl` / `plugin.ttl` / preset TTLs from truce's metadata tree. Never linked into a plugin. |
-| `truce-format-lv2` | The `cargo truce` helper binary. Wraps `truce-lv2-meta` in the JSON protocol the CLI speaks. |
+## Kinds of extension
+
+Each kind meets truce at a different seam.
+
+**Plugin formats** have two halves, because they run at different times.
+A runtime wrapper links into the plugin and exports the format's C ABI;
+`truce::plugin!` emits an `export_<format>!` arm for it under
+`#[cfg(feature = "<format>")]`, resolved in the plugin's own crate. A
+`truce-format-<format>` helper binary on `PATH` renders the bundle at
+package time: `cargo truce` discovers it, and it reads the format-neutral
+metadata tree truce's derives write, through a versioned JSON protocol.
+A format with a new feature name also needs its arm added to
+`truce::plugin!` - the one change on truce's side.
+
+**Editor backends** implement `truce_core::editor::Editor`, the trait a
+plugin returns from `PluginLogic::editor`, as `truce-egui`, `truce-iced`
+and `truce-slint` do. Nothing in truce has to change.
+
+**Components and tooling** - DSP building blocks, widgets, preset
+utilities - are ordinary crates on truce's public API.
 
 ## Using LV2 in a plugin
 
-Two independent pieces, because they run at different times.
-
-**At compile time**, your plugin links the runtime wrapper. Add it as
-an optional dependency behind an `lv2` feature, the same shape the
-in-tree formats use:
+**At compile time**, the plugin links the runtime wrapper, as an optional
+dependency behind an `lv2` feature:
 
 ```toml
 [features]
@@ -33,12 +45,11 @@ lv2 = ["dep:truce-lv2"]
 truce-lv2 = { version = "7.0", optional = true }
 ```
 
-`truce::plugin!` already emits the `::truce_lv2::export_lv2!` arm under
-`#[cfg(feature = "lv2")]` — truce needs no dependency on this repo to do
-that, because the arm is just a token path resolved in your crate.
+`truce::plugin!` already emits `::truce_lv2::export_lv2!` under
+`#[cfg(feature = "lv2")]`.
 
-**At package time**, `cargo truce` needs the helper on your `PATH` to
-render the TTL and lay out the bundle:
+**At package time**, `cargo truce` needs the helper on `PATH` to render
+the TTL and lay out the bundle:
 
 ```sh
 cargo install truce-format-lv2
@@ -46,15 +57,28 @@ cargo truce doctor          # confirms the helper was found
 cargo truce install --lv2
 ```
 
-`cargo truce doctor` reports which formats it can resolve and which
+`cargo truce doctor` lists the formats it can resolve and the
 `truce.toml` keys each helper reads, so a missing helper is a named
 diagnostic rather than a silent skip.
 
+## Adding an extension
+
+- Its crates go under `crates/`, taking truce through the workspace's
+  `[workspace.dependencies]` (`~X.Y` requirements on `../truce` paths; see
+  *Versioning*).
+- It gets an example under `examples/`: a workspace member with the
+  extension enabled by default and `publish = false`. Every
+  `cargo build` / `clippy` / `test` of the workspace then compiles a real
+  plugin through the extension, so CI fails the moment it stops working
+  against truce. The repo-root `truce.toml` carries the examples' plugin
+  identities, which `truce::plugin!` reads at compile time.
+- Its crates release with the rest of the workspace (see *Releasing*).
+
 ## Compatibility
 
-The helper protocol and the metadata tree are versioned (`schema = 1`),
-and the runtime wrapper links against truce's own crates, so the
-practical rule is to match `major.minor`:
+Extensions link against truce's own crates, and the format helper
+protocol and metadata tree are versioned (`schema = 1`), so the rule is to
+match `major.minor`:
 
 | truce | truce-extensions |
 |-------|------------------|
@@ -62,25 +86,21 @@ practical rule is to match `major.minor`:
 
 ## Versioning
 
-The workspace dependencies on truce are path dependencies on a sibling
-`../truce` checkout, each carrying a `~X.Y` requirement for this
-workspace's `major.minor`. The path keeps a local pair building against
-each other without a push in between, which is the only way the seam
-actually gets exercised. At publish, cargo strips the paths and keeps
-the requirements, so a published crate resolves truce from crates.io -
-and `~X.Y` makes cargo enforce the compatibility table above rather
-than just state it.
+The workspace's truce dependencies are path dependencies on a sibling
+`../truce` checkout, each with a `~X.Y` requirement for this workspace's
+`major.minor`. The path lets a local pair build against each other
+without a push in between. At publish, cargo strips the paths and keeps
+the requirements, so a published crate resolves truce from crates.io, and
+`~X.Y` makes cargo enforce the compatibility table above.
 
-The consequence for development: the sibling truce has to be at the same
-`major.minor`. truce only bumps its version when it releases, so between
-a truce release branch opening and that release being cut, run
+The sibling truce has to be at the same `major.minor`. truce bumps its
+version when it releases, so while a truce release is in development, run
 `scripts/align-truce.sh` to set your truce checkout's version to this
 workspace's (undo with `git -C ../truce checkout -- Cargo.toml`).
 
 ## Releasing
 
-truce releases first; this repo follows. The scripts mirror truce's
-`scripts/release/`:
+truce releases first; this repo follows.
 
 ```sh
 scripts/release/bump.sh <patch|minor|major|X.Y.Z>   # version + ~X.Y truce requirement, Cargo.lock, commit
@@ -89,15 +109,12 @@ scripts/release/release.sh                          # tag, publish, push tag, Gi
 ```
 
 - `bump.sh` refuses a new `major.minor` the sibling truce isn't at.
-- `release.sh` refuses to tag until every truce crate this workspace
+- `release.sh` refuses to tag until every truce crate the workspace
   depends on has an `X.Y.*` release on crates.io, since `cargo publish`
-  resolves them from there. Every step is idempotent, so re-run it after
-  a partial failure.
-- Publish order (`topo.py`) is `truce-lv2` → `truce-lv2-meta` →
-  `truce-format-lv2`, computed from `cargo metadata` rather than listed.
-
-There is no `upload-dist.sh` counterpart: this repo builds no plugin
-artifacts. The helper ships through `cargo install truce-format-lv2`.
+  resolves them from there. Every step is idempotent, so re-run it after a
+  partial failure.
+- Every crate except the examples publishes, in dependency order
+  (`scripts/release/topo.py`).
 
 ## Development
 
@@ -112,34 +129,25 @@ cargo test --workspace
 The two checkouts have to be siblings for the path dependencies to
 resolve.
 
-### Examples
-
-`examples/` holds plugins built through this repo's formats.
-`truce-example-gui-zoo-lv2` is truce's GUI zoo - every built-in widget,
-every range shape, nested enums and meters - compiled as LV2, with the
-`lv2` feature on by default. It is a workspace member, so any
-`cargo build` / `clippy` / `test` of the workspace compiles its LV2
-export and editor: if an LV2 plugin stops compiling, the build fails.
-The repo-root `truce.toml` carries its plugin identity, which
-`truce::plugin!` reads at compile time. To install it into a host:
+To install an example into a host, here the LV2 one:
 
 ```sh
-cargo install --path crates/truce-format-lv2   # or: cargo install truce-format-lv2
+cargo install --path crates/truce-format-lv2
 cargo truce install --lv2 -p truce-example-gui-zoo-lv2
 ```
 
 ### CI
 
 `.github/workflows/ci.yml` checks out truce as a sibling at `TRUCE_REF`
-(the development line this repo tracks; overridable per run from
-*Run workflow*), aligns its version, and runs fmt, clippy
-`-D warnings`, build and test on Linux, macOS and Windows - on every
-push and pull request, and nightly, since nothing in truce would
-otherwise notice a change that breaks this repo.
+(the truce development line this repo tracks; overridable per run from
+*Run workflow*), aligns its version, and runs fmt, clippy `-D warnings`,
+build and test on Linux, macOS and Windows - on every push and pull
+request, and nightly, so a truce change that breaks an extension shows up
+within a day.
 
 ## Docs
 
-Format reference and gotchas live with the rest of the truce
+Extension reference and gotchas live with the rest of the truce
 documentation at [truce.audio/docs](https://truce.audio/docs/).
 
 ## License
