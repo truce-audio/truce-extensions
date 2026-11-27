@@ -348,12 +348,15 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
     let _ = writeln!(f, "@prefix patch: <http://lv2plug.in/ns/ext/patch#> .");
     let _ = writeln!(f);
 
+    // `doap:Project` because the plugin carries `doap:maintainer`, whose
+    // domain it is - LV2's own example plugins declare it the same way,
+    // and `lv2_validate` rejects the maintainer without it.
     let category = category_as_lv2(b.category);
     let _ = writeln!(f, "<{}>", b.uri);
     if category == "lv2:Plugin" {
-        let _ = writeln!(f, "    a lv2:Plugin ;");
+        let _ = writeln!(f, "    a lv2:Plugin, doap:Project ;");
     } else {
-        let _ = writeln!(f, "    a lv2:Plugin, {category} ;");
+        let _ = writeln!(f, "    a lv2:Plugin, {category}, doap:Project ;");
     }
     let _ = writeln!(f, "    doap:name \"{}\" ;", escape_turtle(&b.plugin_name));
     let (minor, micro) = lv2_version(&b.version);
@@ -416,15 +419,11 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
         if let Some(unit) = lv2_unit(p.unit) {
             let _ = writeln!(f, "    units:unit units:{unit} ;");
         }
-        match p.range {
-            Lv2Range::Discrete { .. } => {
-                let _ = writeln!(f, "    lv2:portProperty lv2:integer ;");
-            }
-            Lv2Range::Enum { .. } => {
-                let _ = writeln!(f, "    lv2:portProperty lv2:integer, lv2:enumeration ;");
-            }
-            _ => {}
-        }
+        // No `lv2:portProperty` here: its domain is `lv2:Port`, and this is
+        // a parameter. Hosts type a parameter from `rdfs:range` (Ardour's
+        // load_supported_properties reads no port properties from it), and
+        // the param's control port below still carries integer /
+        // enumeration.
         let _ = writeln!(f, "    .");
     }
 
@@ -1057,6 +1056,28 @@ mod tests {
     /// pin that the rendered port is valid (`minimum <= default <= maximum`)
     /// so no host rejects it (the `enum(0)` bug rendered `maximum 0` with
     /// `default 1`).
+    /// What `lv2_validate` checks against the LV2 schemas: `lv2:portProperty`
+    /// only on ports (an enum param's control port keeps it, its
+    /// `lv2:Parameter` block doesn't), and the plugin typed `doap:Project`
+    /// for the `doap:maintainer` it carries.
+    #[test]
+    fn only_ports_carry_port_properties_and_the_plugin_is_a_project() {
+        let (_m, ttl) = render_ttls(
+            &bundle(Lv2Category::Instrument, true, vec![enum_param()]),
+            "x.so",
+        );
+        let parameter = ttl
+            .split("a lv2:Parameter ;")
+            .nth(1)
+            .and_then(|rest| rest.split("\n    .\n").next())
+            .expect("a parameter block");
+        assert!(!parameter.contains("portProperty"), "{parameter}");
+        assert!(ttl.contains("lv2:portProperty lv2:integer, lv2:enumeration ;"));
+        assert!(ttl.contains("a lv2:Plugin, lv2:InstrumentPlugin, doap:Project ;"));
+        let (_m, effect) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
+        assert!(effect.contains("a lv2:Plugin, doap:Project ;"));
+    }
+
     #[test]
     fn enum_port_default_within_range() {
         let (_m, ttl) = render_ttls(
