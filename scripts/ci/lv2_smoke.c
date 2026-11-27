@@ -75,9 +75,8 @@ int main(int argc, char **argv) {
         }
     }
     if (found != 1) {
-        char n[32];
-        snprintf(n, sizeof n, "%d plugins in the bundle, expected 1", found);
-        return fail(n, lilv_node_as_uri(bundle));
+        fprintf(stderr, "lv2_smoke: %d plugins in %s, expected 1\n", found, lilv_node_as_uri(bundle));
+        return 1;
     }
     const char *uri = lilv_node_as_uri(lilv_plugin_get_uri(plugin));
     if (!lilv_plugin_verify(plugin)) return fail("lilv_plugin_verify rejected", uri);
