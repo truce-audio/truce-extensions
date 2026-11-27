@@ -145,6 +145,15 @@ build and test on Linux, macOS and Windows - on every push and pull
 request, and nightly, so a truce change that breaks an extension shows up
 within a day.
 
+A second job, on Linux and macOS, builds LV2 bundles the way a plugin
+author does and checks them the way a host sees them: the example, and an
+effect and an instrument freshly scaffolded with `cargo truce new` and
+given LV2 as the scaffold's comment says to (`scripts/ci/lv2-scaffold.sh`).
+`scripts/ci/lv2-check.sh` runs `lv2_validate` against the LV2 spec, checks
+lilv discovers the plugin, then instantiates it and runs a block. Both
+scripts run locally too, with lilv installed (`brew install lilv`, or
+`scripts/ci/install-linux-deps.sh --lv2`).
+
 ## Docs
 
 Extension reference and gotchas live with the rest of the truce

@@ -65,16 +65,7 @@ jobs:
 
       - name: Linux system deps
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config \
-            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
-            libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
-            libwayland-dev \
-            libasound2-dev libjack-jackd2-dev \
-            libfontconfig1-dev libfreetype-dev
+        run: scripts/ci/install-linux-deps.sh
 
       # Before truce cuts the release this repo tracks, its checkout still
       # carries the previous version; see the script.
@@ -93,3 +84,71 @@ jobs:
 
       - name: test
         run: cargo test --workspace
+
+  # Builds LV2 bundles the way a plug-in author does and checks them the way
+  # a host sees them (scripts/ci/lv2-check.sh: lv2_validate against the LV2
+  # spec, lilv discovery, then instantiate and run): the example, which also
+  # has to pass audio through unchanged, and an effect and an instrument
+  # freshly scaffolded with `cargo truce new` and given LV2 as the
+  # scaffold's own comment says to (scripts/ci/lv2-scaffold.sh). Linux and
+  # macOS, where lilv installs from the system package manager; the check
+  # job above still builds the LV2 crates on Windows.
+  lv2:
+    name: lv2 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: truce-extensions
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: truce-extensions
+
+      - uses: actions/checkout@v4
+        with:
+          repository: truce-audio/truce
+          ref: ${{ inputs.truce_ref || env.TRUCE_REF }}
+          path: truce
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: truce-extensions
+          key: lv2-${{ matrix.os }}
+          cache-bin: false
+
+      - name: Linux system deps
+        if: runner.os == 'Linux'
+        run: scripts/ci/install-linux-deps.sh --lv2
+
+      - name: macOS system deps
+        if: runner.os == 'macOS'
+        run: brew install lilv
+
+      - name: Align truce version
+        run: scripts/align-truce.sh
+
+      # cargo truce from the truce checkout, the LV2 helper from this one.
+      - name: Build cargo-truce and truce-format-lv2
+        run: |
+          cargo build -p truce-format-lv2
+          cargo build --manifest-path ../truce/Cargo.toml -p cargo-truce
+          echo "$PWD/target/debug" >> "$GITHUB_PATH"
+          echo "$(cd ../truce && pwd)/target/debug" >> "$GITHUB_PATH"
+
+      - name: Example bundle
+        run: |
+          cargo truce build --lv2 --debug -p truce-example-gui-zoo-lv2
+          scripts/ci/lv2-check.sh --passthrough target/bundles/truce-gui-zoo-lv2.lv2
+
+      - name: Scaffolded bundles
+        run: |
+          scripts/ci/lv2-scaffold.sh "$RUNNER_TEMP/lv2-scaffold" > "$RUNNER_TEMP/lv2-bundles.txt"
+          xargs scripts/ci/lv2-check.sh < "$RUNNER_TEMP/lv2-bundles.txt"
